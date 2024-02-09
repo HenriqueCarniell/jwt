@@ -16,6 +16,44 @@ const db = mysql.createPool({
 
 app.use(express.json())
 
+let checarToken = (req,res,next) => {
+    const authheader = req.headers['authorization'];
+    const token = authheader && authheader.split(" ")[1];
+
+    if(!token) {
+        res.status(501).json({error: "acesso negado"});
+    }
+
+    try {
+        const secret = process.env.SECRET;
+        jwt.verify(token,secret);
+        next();
+    } catch(error) {
+        res.status(501).json({msg: "acesso invalido"});
+    }
+}
+
+//Rota privada
+app.get("/user/:id", checarToken, async(req, res) => {
+    const id = req.params.id;
+
+    const sql = "SELECT * FROM usuario WHERE idusuario = ?";
+
+    db.query(sql, [id], (err, result) => {
+        if (err) {
+            console.log(err);
+            return res.status(500).json({ err: "Erro ao recuperar o usuário" });
+        }
+
+        if (result.length > 0) {
+            res.status(200).json({ msg: "Usuário encontrado", user: result[0]});
+        } else {
+            res.status(404).json({ msg: "Usuário não encontrado" });
+        }
+    });
+});
+
+
 // checar se usuario existe no banco de dados
 let usuarioexiste = async (email) => {
     return new Promise((resolve, reject) => {
@@ -37,18 +75,24 @@ let usuarioexiste = async (email) => {
 
 // Função que insere os dados no banco de dados
 let CriarUser = async (nome, email, senha) => {
+
+    // Criptografar a senha
     const salt = await bcrypt.genSalt(12);
     const senhacript = await bcrypt.hash(senha, salt);
 
-    const sql = "insert into usuario (nome, email, senha) values (?, ?, ?)"
+    const sql = "insert into usuario (nome, email, senha) values (?, ?, ?)";
 
-    db.query(sql, [nome, email, senhacript], (err, result) => {
-        if (err) {
-            console.log(err)
-        } else {
-            console.log(result)
-        }
-    })
+    return new Promise((resolve, reject) => {
+        db.query(sql, [nome, email, senhacript], (err, result) => {
+            if (err) {
+                console.log(err);
+                reject(err);
+            } else {
+                console.log(result);
+                resolve(result.insertId);
+            }
+        });
+    });
 }
 
 // Função para validar os dados na rota de registro
@@ -128,27 +172,35 @@ app.post('/login/usuario', async (req, res) => {
 
     const erro = ValidacampoLogin(email, senha);
 
-    try {
-        if (erro) {
-            res.status(501).json({ erro });
-        }
-    } catch (err) {
-        console.log(err);
+    if (erro) {
+        return res.status(422).json({ erro });
     }
 
-    const retorno = await checardados(email, senha);
+    const match = await checardados(email, senha);
 
-    try {
-        if (retorno === true) {
-            res.status(201).json({ msg: "Usuario encontrado" });
+    if (match === false) {
+        return res.status(404).json({ err: "Usuario não encontrado" });
+    }
+
+    // Recupera o usuário do banco de dados
+    const sql = "select * from usuario where email = ?";
+    db.query(sql, [email], async (err, result) => {
+        if (err) {
+            console.log(err);
+            return res.status(500).json({ err: "Erro ao recuperar o usuário" });
         } else {
-            res.status(501).json({ err: "Usuario não encontrado" });
-        }
-    } catch (err) {
-        console.log(err);
-    }
 
-})
+            // Cria um token JWT com o ID do usuário
+            const userId = result[0].id;
+            const secrete = process.env.SECRET;
+            const token = jwt.sign({ id: userId }, secrete);
+    
+            // Retorna o token para o cliente
+            res.status(200).json({ msg: "Usuario encontrado", token: token });
+        }
+    });
+    
+});
 
 app.listen(4000, () => {
     console.log(`servidor rodando na porta 4000`);
