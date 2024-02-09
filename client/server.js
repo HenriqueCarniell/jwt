@@ -16,17 +16,17 @@ const db = mysql.createPool({
 
 app.use(express.json())
 
-// checar se usuario existe
+// checar se usuario existe no banco de dados
 let usuarioexiste = async (email) => {
     return new Promise((resolve, reject) => {
         const sql = "select * from usuario where email = ?";
 
-        db.query(sql,[email], (err,result) => {
-            if(err) {
+        db.query(sql, [email], (err, result) => {
+            if (err) {
                 reject(err);
             }
-        
-            if(result.length > 0) {
+
+            if (result.length > 0) {
                 resolve(true);
             } else {
                 resolve(false);
@@ -35,14 +35,15 @@ let usuarioexiste = async (email) => {
     });
 }
 
-let CriarUser = async (nome,email,senha) => {
+// Função que insere os dados no banco de dados
+let CriarUser = async (nome, email, senha) => {
     const salt = await bcrypt.genSalt(12);
     const senhacript = await bcrypt.hash(senha, salt);
 
     const sql = "insert into usuario (nome, email, senha) values (?, ?, ?)"
 
-    db.query(sql,[nome,email,senhacript], (err,result) => {
-        if(err) {
+    db.query(sql, [nome, email, senhacript], (err, result) => {
+        if (err) {
             console.log(err)
         } else {
             console.log(result)
@@ -50,66 +51,101 @@ let CriarUser = async (nome,email,senha) => {
     })
 }
 
-let ValidacampoRegistro = (nome,email,senha) => {
+// Função para validar os dados na rota de registro
+let ValidacampoRegistro = (nome, email, senha) => {
     //validações
-    if(!nome) {
+    if (!nome) {
         return { status: 422, msg: "O nome é obrigatorio" };
     }
-    if(!email) {
+    if (!email) {
         return { status: 422, msg: "O email é obrigatorio" };
     }
-    if(!senha) {
+    if (!senha) {
         return { status: 422, msg: "A senha é obrigatorio" };
     }
     return null;
 }
 
-let ValidacampoLogin = (email,senha) => {
+// Função para validar os dados na rota de login
+let ValidacampoLogin = (email, senha) => {
     //validações
-    if(!email) {
+    if (!email) {
         return { status: 422, msg: "O email é obrigatorio" };
     }
-    if(!senha) {
+    if (!senha) {
         return { status: 422, msg: "A senha é obrigatorio" };
     }
     return null;
 }
 
-// registrar usuario
-app.post('/register/usuario', async(req,res) => {
-    const {nome,email,senha} = req.body;
+// Rota para registrar usuario
+app.post('/register/usuario', async (req, res) => {
+    const { nome, email, senha } = req.body;
 
-    const erro = ValidacampoRegistro(nome,email,senha);
+    const erro = ValidacampoRegistro(nome, email, senha);
 
-    if(erro) {
-        return res.status(422).json({msg: erro});
+    if (erro) {
+        return res.status(422).json({ msg: erro });
     }
-    
+
     try {
         const existe = await usuarioexiste(email);
-        if(existe === true) {
-            res.status(201).json({msg: "Utilize outro email"});
+        if (existe === true) {
+            res.status(201).json({ msg: "Utilize outro email" });
         } else {
-            await CriarUser(nome,email,senha);
-            res.status(200).json({msg: "Usuário criado com sucesso"});
+            await CriarUser(nome, email, senha);
+            res.status(200).json({ msg: "Usuário criado com sucesso" });
         }
-    } catch(err) {
+    } catch (err) {
         console.log(err);
-        res.status(500).json({msg: "Erro ao verificar o usuário"});
+        res.status(500).json({ msg: "Erro ao verificar o usuário" });
     }
 })
 
-app.post('/login/usuario', async (req,res) => {
-    const {email,senha} = req.body;
+// Checar se o email e a senha do usuario bate com a do banco de dados
+let checardados = async (emaillogin, senhalogin) => {
+    return new Promise((resolve, reject) => {
+        const sql = "select * from usuario where email = ?";
 
-    const erro = ValidacampoLogin(email,senha)
+        db.query(sql, [emaillogin], async (err, result) => {
+            if (err) {
+                reject(err);
+                console.log(err);
+            }
+            if (result.length > 0) {
+                const match = await bcrypt.compare(senhalogin, result[0].senha);
+                resolve(match);
+            } else {
+                resolve(false);
+            }
+        })
+    })
+}
+
+// Logar Usuario
+app.post('/login/usuario', async (req, res) => {
+    const { email, senha } = req.body;
+
+    const erro = ValidacampoLogin(email, senha);
 
     try {
-        if(erro) {
-            res.status(501).json({erro})
+        if (erro) {
+            res.status(501).json({ erro });
         }
-    } catch(err) {
-        console.log(err)
+    } catch (err) {
+        console.log(err);
+    }
+
+    const retorno = await checardados(email, senha);
+
+    try {
+        if (retorno === true) {
+            res.status(201).json({ msg: "Usuario encontrado" });
+        } else {
+            res.status(501).json({ err: "Usuario não encontrado" });
+        }
+    } catch (err) {
+        console.log(err);
     }
 
 })
