@@ -3,205 +3,103 @@ const express = require('express');
 const mysql = require('mysql2');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const authconfig = require('./auth')
 
 const app = express();
 
 const db = mysql.createPool({
     user: 'root',
     host: 'localhost',
-    database: 'jwt',
+    database: 'treinojwt',
     port: 3306,
     password: "2006"
-});
+})
 
-app.use(express.json())
+app.use(express.json());
+app.use(express.urlencoded({extended:true}));
 
-let checarToken = (req,res,next) => {
-    const authheader = req.headers['authorization'];
-    const token = authheader && authheader.split(" ")[1];
+app.post("/send/login/dados", async (req,res) => {
+    const {email,senha} = req.body;
 
-    if(!token) {
-        res.status(501).json({error: "acesso negado"});
-    }
+    let usuario = await validaEmailEnviadoBancoDeDados(email)
 
-    try {
-        const secret = process.env.SECRET;
-        jwt.verify(token,secret);
-        next();
-    } catch(error) {
-        res.status(501).json({msg: "acesso invalido"});
-    }
-}
+    if(usuario) {
+        let comparaSenha = await bcrypt.compare(senha, usuario.senha)
 
-//Rota privada
-app.get("/user/:id", checarToken, async(req, res) => {
-    const id = req.params.id;
+        if (comparaSenha) {
+            const {secret, expiresIn} = authconfig.jwt;
 
-    const sql = "SELECT * FROM usuario WHERE idusuario = ?";
-
-    db.query(sql, [id], (err, result) => {
-        if (err) {
-            console.log(err);
-            return res.status(500).json({ err: "Erro ao recuperar o usuário" });
-        }
-
-        if (result.length > 0) {
-            res.status(200).json({ msg: "Usuário encontrado", user: result[0]});
+            const token = jwt.sign({}, secret, {
+                subject: String(usuario.idusuario),
+                expiresIn
+            })
+            
+            res.status(201).json({token, usuario});
         } else {
-            res.status(404).json({ msg: "Usuário não encontrado" });
+            res.status(404).json({ msg: "Email ou Senha incorretos" });
         }
-    });
-});
-
-
-// checar se usuario existe no banco de dados
-let usuarioexiste = async (email) => {
-    return new Promise((resolve, reject) => {
-        const sql = "select * from usuario where email = ?";
-
-        db.query(sql, [email], (err, result) => {
-            if (err) {
-                reject(err);
-            }
-
-            if (result.length > 0) {
-                resolve(true);
-            } else {
-                resolve(false);
-            }
-        })
-    });
-}
-
-// Função que insere os dados no banco de dados
-let CriarUser = async (nome, email, senha) => {
-
-    // Criptografar a senha
-    const salt = await bcrypt.genSalt(12);
-    const senhacript = await bcrypt.hash(senha, salt);
-
-    const sql = "insert into usuario (nome, email, senha) values (?, ?, ?)";
-
-    return new Promise((resolve, reject) => {
-        db.query(sql, [nome, email, senhacript], (err, result) => {
-            if (err) {
-                console.log(err);
-                reject(err);
-            } else {
-                console.log(result);
-                resolve(result.insertId);
-            }
-        });
-    });
-}
-
-// Função para validar os dados na rota de registro
-let ValidacampoRegistro = (nome, email, senha) => {
-    //validações
-    if (!nome) {
-        return { status: 422, msg: "O nome é obrigatorio" };
-    }
-    if (!email) {
-        return { status: 422, msg: "O email é obrigatorio" };
-    }
-    if (!senha) {
-        return { status: 422, msg: "A senha é obrigatorio" };
-    }
-    return null;
-}
-
-// Função para validar os dados na rota de login
-let ValidacampoLogin = (email, senha) => {
-    //validações
-    if (!email) {
-        return { status: 422, msg: "O email é obrigatorio" };
-    }
-    if (!senha) {
-        return { status: 422, msg: "A senha é obrigatorio" };
-    }
-    return null;
-}
-
-// Rota para registrar usuario
-app.post('/register/usuario', async (req, res) => {
-    const { nome, email, senha } = req.body;
-
-    const erro = ValidacampoRegistro(nome, email, senha);
-
-    if (erro) {
-        return res.status(422).json({ msg: erro });
-    }
-
-    try {
-        const existe = await usuarioexiste(email);
-        if (existe === true) {
-            res.status(201).json({ msg: "Utilize outro email" });
-        } else {
-            await CriarUser(nome, email, senha);
-            res.status(200).json({ msg: "Usuário criado com sucesso" });
-        }
-    } catch (err) {
-        console.log(err);
-        res.status(500).json({ msg: "Erro ao verificar o usuário" });
     }
 })
 
-// Checar se o email e a senha do usuario bate com a do banco de dados
-let checardados = async (emaillogin, senhalogin) => {
+
+let validaEmailEnviadoBancoDeDados = (email) => {
     return new Promise((resolve, reject) => {
         const sql = "select * from usuario where email = ?";
 
-        db.query(sql, [emaillogin], async (err, result) => {
-            if (err) {
-                reject(err);
-                console.log(err);
+        db.query(sql, [email], (err,result) => {
+            if(err) {
+                reject(err)
+                console.log(err)
             }
-            if (result.length > 0) {
-                const match = await bcrypt.compare(senhalogin, result[0].senha);
-                resolve(match);
+            if(result.length > 0) {
+                resolve(result[0])
             } else {
-                resolve(false);
+                resolve(false)
             }
         })
     })
 }
 
-// Logar Usuario
-app.post('/login/usuario', async (req, res) => {
-    const { email, senha } = req.body;
+app.post("/send/register/dados", async (req,res) => {
+    const {email,senha} = req.body;
 
-    const erro = ValidacampoLogin(email, senha);
+    await ValidaRegistroUsuario(email,senha,res)
+    
+})
 
-    if (erro) {
-        return res.status(422).json({ erro });
-    }
-
-    const match = await checardados(email, senha);
-
-    if (match === false) {
-        return res.status(404).json({ err: "Usuario não encontrado" });
-    }
-
-    // Recupera o usuário do banco de dados
+let ValidaRegistroUsuario = async (email, senha, res) => {
     const sql = "select * from usuario where email = ?";
-    db.query(sql, [email], async (err, result) => {
-        if (err) {
-            console.log(err);
-            return res.status(500).json({ err: "Erro ao recuperar o usuário" });
-        } else {
 
-            // Cria um token JWT com o ID do usuário
-            const userId = result[0].id;
-            const secrete = process.env.SECRET;
-            const token = jwt.sign({ id: userId }, secrete);
-    
-            // Retorna o token para o cliente
-            res.status(200).json({ msg: "Usuario encontrado", token: token });
+    const salt = await bcrypt.genSalt(12);
+    const senhaCript = await bcrypt.hash(senha, salt);
+
+    db.query(sql,[email], async (err,result) => {
+        if(err) {
+            console.log(err)
         }
-    });
-    
-});
+        if(result.length > 0) {
+            await res.status(202).json({msg: "Esse email já foi registrado"})
+        } else {
+            await inserirUsuario(email,senhaCript,res)
+        }
+    })
+}
+
+let inserirUsuario = (email,senhaCript,res) => {
+    const sql = "insert into usuario(email,senha) values(?,?)";
+
+    db.query(sql, [email,senhaCript], async (err,result) => {
+        if(err) {
+            console.log(err)
+        }
+        if(result) {
+            await res.status(202).json({msg: "Usuario inserido com sucesso"})
+        } else {
+            await res.status(202).json({error: "Erro ao inserir Usuario"})
+        }
+    })
+} 
 
 app.listen(4000, () => {
-    console.log(`servidor rodando na porta 4000`);
+    console.log(`servidor rodando na porta 4000`)
 })
