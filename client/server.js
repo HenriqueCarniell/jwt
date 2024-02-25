@@ -3,7 +3,9 @@ const express = require('express');
 const mysql = require('mysql2');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const authconfig = require('./auth')
+const authconfig = require('./auth');
+
+const ensureauthenticated = require('./middlewares/ensureAuthenticated')
 
 const app = express();
 
@@ -39,6 +41,12 @@ app.post("/send/login/dados", async (req,res) => {
             res.status(404).json({ msg: "Email ou Senha incorretos" });
         }
     }
+})
+
+app.put("/:id", ensureauthenticated, (req,res) => {
+    const user_id = req.user.id
+
+    console.log(user_id)
 })
 
 
